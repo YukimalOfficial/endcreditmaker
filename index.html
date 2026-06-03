@@ -24,15 +24,18 @@
         button { flex: 1; padding: 12px; font-size: 14px; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; }
         .btn-preview { background: #444; color: white; }
         .btn-record { background: #e50914; color: white; }
+        .btn-clear-bg { background: #666; color: white; padding: 8px; font-size: 12px; }
         button:disabled { background: #555 !important; color: #888; cursor: not-allowed; }
         #status { margin-top: 10px; font-size: 14px; color: #ffc107; font-weight: bold; }
         audio { width: 100%; margin-top: 8px; }
+        video { display: none; }
         
         .tag-guide { background: #2a2a2a; padding: 10px; border-radius: 4px; font-size: 11px; color: #ccc; line-height: 1.5; border: 1px solid #444; }
         .photo-list { background: #333; padding: 10px; border-radius: 4px; max-height: 120px; overflow-y: auto; margin-top: 8px; }
         .photo-item { display: flex; align-items: center; justify-content: space-between; background: #444; padding: 6px; margin-bottom: 5px; border-radius: 4px; font-size: 12px; }
         .photo-item img { height: 30px; border-radius: 2px; object-fit: cover; }
         .photo-item button { flex: none; padding: 4px 8px; font-size: 11px; background: #d9534f; color: white; width: auto; }
+        .bg-info { font-size: 11px; color: #aaa; margin-top: 4px; }
     </style>
 </head>
 <body>
@@ -62,14 +65,21 @@
             </div>
             
             <div class="form-group">
-                <label for="bg-image-input">🖼️ 背景写真・画像をアップロード</label>
+                <label>🖼️ 背景写真・画像をアップロード</label>
                 <input type="file" id="bg-image-input" accept="image/*" onchange="loadBgImage(this)">
+            </div>
+
+            <div class="form-group">
+                <label>🎬 背景動画をアップロード</label>
+                <input type="file" id="bg-video-input" accept="video/*" onchange="loadBgVideo(this)">
+                <div class="bg-info">※ 背景画像と背景動画の両方がある場合は動画が優先されます</div>
+                <button class="btn-clear-bg" onclick="clearBgVideo()">背景動画をクリア</button>
             </div>
 
             <div class="form-group" style="background:#2b2b2b; padding:12px; border-radius:6px; border:1px solid #444;">
                 <label>📸 一緒にスクロールさせる写真をアップロード</label>
                 <input type="file" id="multi-photo-input" accept="image/*" multiple onchange="addPhotos(this)">
-                <div class="info-text" style="font-size:11px; color:#aaa; margin-top:4px;">※ 停止中に選択すると青い枠が出ます。右下の角を引っ張ってサイズ変更、上の円を回してサイズ変更できます。</div>
+                <div class="bg-info">※ 停止中に選択すると青い枠が出ます。右下の角を引っ張ってサイズ変更、上の円を回してサイズ変更できます。</div>
                 <div class="photo-list" id="photo-list-container">
                     <div style="color:#888; text-align:center; font-size:12px; padding:10px;">写真がありません</div>
                 </div>
@@ -122,7 +132,7 @@
 
             <div class="btn-group">
                 <button class="btn-preview" id="btn-preview" onclick="startPreview()">▶ プレビュー再生</button>
-                <button class="btn-record" id="btn-record" onclick="startRecording()">🎬 動画を書き出し（MP4）</button>
+                <button class="btn-record" id="btn-record" onclick="startRecording()">🎬 動画を書き出し（WebM）</button>
             </div>
             
             <div id="status"></div>
@@ -132,11 +142,14 @@
             <canvas id="movieCanvas" width="1280" height="720"></canvas>
         </div>
     </div>
-    <script src="https://cdn.jsdelivr.net/npm/webm-to-mp4"></script>
+
+    <video id="bgVideo" style="display:none;"></video>
+
     <script>
         const canvas = document.getElementById("movieCanvas");
         const ctx = canvas.getContext("2d");
         const bgmPlayer = document.getElementById("bgm-player");
+        const bgVideo = document.getElementById("bgVideo");
         let animationId;
         let mediaRecorder;
         let recordedChunks = [];
@@ -145,6 +158,7 @@
         let audioContext, audioSource, audioDestination;
         
         let bgImage = null;
+        let bgVideoLoaded = false;
         let photos = []; 
         let selectedPhoto = null; 
         let isDragging = false;
@@ -209,6 +223,28 @@
                     document.getElementById("status").innerText = "🖼️ 背景写真がセットされました。";
                 };
             }
+        }
+
+        function loadBgVideo(input) {
+            const file = input.files[0];
+            if (file) {
+                bgVideo.src = URL.createObjectURL(file);
+                bgVideo.onloadedmetadata = function() {
+                    bgVideoLoaded = true;
+                    bgVideo.loop = true;
+                    bgVideo.muted = true;
+                    drawStaticScene();
+                    document.getElementById("status").innerText = "🎬 背景動画がセットされました。";
+                };
+            }
+        }
+
+        function clearBgVideo() {
+            bgVideo.src = "";
+            bgVideoLoaded = false;
+            document.getElementById("bg-video-input").value = "";
+            document.getElementById("status").innerText = "背景動画がクリアされました。";
+            drawStaticScene();
         }
 
         function addPhotos(input) {
@@ -315,7 +351,6 @@
             if (file) {
                 bgmPlayer.src = URL.createObjectURL(file);
                 bgmPlayer.style.display = "block";
-                // AudioContextの初期化（ユーザーインタラクション時に実行）
                 initAudioContext();
                 document.getElementById("status").innerText = "BGMが読み込まれました。";
             }
@@ -503,7 +538,10 @@
             const defaultColor = document.getElementById("color-input").value;
             const lines = text.split("\n");
 
-            if (bgImage) {
+            // 背景の描画：動画が優先される
+            if (bgVideoLoaded && bgVideo.readyState >= 2) {
+                ctx.drawImage(bgVideo, 0, 0, canvas.width, canvas.height);
+            } else if (bgImage) {
                 ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
             } else {
                 ctx.fillStyle = "#000000";
@@ -521,7 +559,7 @@
                 let currentAlign = textAlign;
                 let isColumnSplit = false;
 
-                // 複数タグに対応：すべてのタグをチェック（else ifではなくifで）
+                // 複数タグに対応
                 if (currentLine.indexOf("[T]") === 0) {
                     currentFontSize = Math.floor(defaultFontSize * 1.4);
                     currentLine = currentLine.substring(3).trim();
@@ -655,6 +693,12 @@
             const maxScrollDistance = parseFloat(slider.max);
             currentScrollY = 0;
 
+            // 背景動画がある場合は再生開始
+            if (bgVideoLoaded) {
+                bgVideo.currentTime = 0;
+                bgVideo.play().catch(function(e){ console.log(e); });
+            }
+
             function animate() {
                 renderScene(currentScrollY);
                 slider.value = currentScrollY;
@@ -662,6 +706,9 @@
 
                 if (currentScrollY > maxScrollDistance) {
                     cancelAnimationFrame(animationId);
+                    if (bgVideoLoaded) {
+                        bgVideo.pause();
+                    }
                     if (onComplete) { onComplete(); }
                 } else {
                     animationId = requestAnimationFrame(animate);
@@ -687,6 +734,7 @@
 
             startAnimationLoop(function() {
                 if (bgmPlayer.src) { bgmPlayer.pause(); }
+                if (bgVideoLoaded) { bgVideo.pause(); }
                 document.getElementById("status").innerText = "プレビューが終了しました。";
                 isPlaying = false;
                 document.getElementById("scroll-slider").value = 0;
@@ -737,11 +785,9 @@
 
             mediaRecorder.onstop = function() {
                 if (bgmPlayer.src) { bgmPlayer.pause(); }
+                if (bgVideoLoaded) { bgVideo.pause(); }
 
-                // WebM形式で正しく記録される（修正済み）
                 const blob = new Blob(recordedChunks, { type: "video/webm" });
-                
-                // MP4へ変換する簡易処理（ブラウザ環境に応じて）
                 convertAndDownload(blob, useBgm, statusDiv, btnRecord, btnPreview);
             };
 
@@ -750,16 +796,10 @@
         }
 
         function convertAndDownload(webmBlob, useBgm, statusDiv, btnRecord, btnPreview) {
-            // MP4への変換：FFmpeg.js等のライブラリが必要な場合はここで実装
-            // 現在の簡易版では、WebM形式でダウンロード（ブラウザで再生可能）
-            // または、動画変換APIを使用してMP4に変換することも可能
-            
             const url = URL.createObjectURL(webmBlob);
             const a = document.createElement("a");
             a.href = url;
             
-            // MP4ダウンロード名だが、実際にはWebM形式
-            // （本来ならFF mpegで変換するが、ブラウザのみでは困難）
             if (useBgm) {
                 if (bgmPlayer.src) {
                     a.download = "endroll_with_bgm.webm";
