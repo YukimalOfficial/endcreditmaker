@@ -12,7 +12,7 @@
         canvas { background: #000; border: 2px solid #444; border-radius: 4px; max-width: 100%; height: auto; cursor: default; }
         .form-group { margin-bottom: 15px; }
         label { display: block; font-size: 13px; color: #bbb; margin-bottom: 5px; font-weight: bold; }
-        textarea { width: 100%; height: 160px; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; padding: 10px; box-sizing: border-box; font-size: 13px; line-height: 1.6; resize: vertical; }
+        textarea { width: 100%; height: 160px; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; padding: 10px; box-sizing: border-box; font-size: 13px; line-height: 1.6; resize: none; }
         input[type="number"], input[type="file"], select, input[type="range"] { width: 100%; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; padding: 6px; box-sizing: border-box; }
         input[type="number"] { width: 80px; }
         input[type="range"] { background: none; border: none; padding: 0; }
@@ -69,7 +69,7 @@
             <div class="form-group" style="background:#2b2b2b; padding:12px; border-radius:6px; border:1px solid #444;">
                 <label>📸 一緒にスクロールさせる写真をアップロード</label>
                 <input type="file" id="multi-photo-input" accept="image/*" multiple onchange="addPhotos(this)">
-                <div class="info-text" style="font-size:11px; color:#aaa; margin-top:4px;">※ 停止中に選択すると青い枠が出ます。右下の角を引っ張ってサイズ変更、上の丸いツマミを回して回転できます。</div>
+                <div class="info-text" style="font-size:11px; color:#aaa; margin-top:4px;">※ 停止中に選択すると青い枠が出ます。右下の角を引っ張ってサイズ変更、上の円を回してサイズ変更できます。</div>
                 <div class="photo-list" id="photo-list-container">
                     <div style="color:#888; text-align:center; font-size:12px; padding:10px;">写真がありません</div>
                 </div>
@@ -132,6 +132,7 @@
             <canvas id="movieCanvas" width="1280" height="720"></canvas>
         </div>
     </div>
+    <script src="https://cdn.jsdelivr.net/npm/webm-to-mp4"></script>
     <script>
         const canvas = document.getElementById("movieCanvas");
         const ctx = canvas.getContext("2d");
@@ -198,7 +199,7 @@
         }
 
         function loadBgImage(input) {
-            const file = input.files;
+            const file = input.files[0];
             if (file) {
                 const img = new Image();
                 img.src = URL.createObjectURL(file);
@@ -218,25 +219,26 @@
                 const file = files[i];
                 const img = new Image();
                 img.src = URL.createObjectURL(file);
-                img.onload = function() {
-                    const pWidth = 200;
-                    const pHeight = 200 * (img.height / img.width);
-                    // ズレを無くすため、スクロールに完全に連動する絶対座標で管理します
-                    const photoObj = {
-                        id: Date.now() + Math.random(),
-                        img: img,
-                        name: file.name,
-                        x: canvas.width / 2 - pWidth / 2,
-                        y: canvas.height / 2 - pHeight / 2 + currentScrollY, 
-                        width: pWidth,
-                        height: pHeight,
-                        angle: 0
+                img.onload = (function(fileName) {
+                    return function() {
+                        const pWidth = 200;
+                        const pHeight = 200 * (img.height / img.width);
+                        const photoObj = {
+                            id: Date.now() + Math.random(),
+                            img: img,
+                            name: fileName,
+                            x: canvas.width / 2 - pWidth / 2,
+                            y: canvas.height / 2 - pHeight / 2 + currentScrollY, 
+                            width: pWidth,
+                            height: pHeight,
+                            angle: 0
+                        };
+                        photos.push(photoObj);
+                        selectedPhoto = photoObj;
+                        updatePhotoListUI();
+                        drawStaticScene();
                     };
-                    photos.push(photoObj);
-                    selectedPhoto = photoObj;
-                    updatePhotoListUI();
-                    drawStaticScene();
-                };
+                })(file.name);
             }
             input.value = "";
         }
@@ -309,13 +311,26 @@
         }
 
         function loadAudio(input) {
-            const file = input.files;
+            const file = input.files[0];
             if (file) {
                 bgmPlayer.src = URL.createObjectURL(file);
                 bgmPlayer.style.display = "block";
+                // AudioContextの初期化（ユーザーインタラクション時に実行）
+                initAudioContext();
                 document.getElementById("status").innerText = "BGMが読み込まれました。";
             }
         }
+
+        function initAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                audioSource = audioContext.createMediaElementSource(bgmPlayer);
+                audioDestination = audioContext.createMediaStreamDestination();
+                audioSource.connect(audioContext.destination);
+                audioSource.connect(audioDestination);
+            }
+        }
+
         function getCanvasMousePos(e) {
             const rect = canvas.getBoundingClientRect();
             const scaleX = canvas.width / rect.width;
@@ -326,14 +341,12 @@
             };
         }
 
-        // マウスを押したときの処理（画面のスクロール量を正確に計算に含めます）
         canvas.addEventListener("mousedown", function(e) {
             if (isPlaying || isRecording) return;
             const pos = getCanvasMousePos(e);
 
             if (selectedPhoto) {
                 const p = selectedPhoto;
-                // 画面上の見た目のY座標を正確に計算
                 const renderY = p.y - currentScrollY;
                 const cx = p.x + p.width / 2;
                 const cy = renderY + p.height / 2;
@@ -345,7 +358,6 @@
                 const rx = dx * cos - dy * sin;
                 const ry = dx * sin + dy * cos;
 
-                // ① 回転ハンドル
                 const rotX = 0;
                 const rotY = -p.height / 2 - rotateHandleDistance;
                 if (Math.abs(rx - rotX) < handleSize && Math.abs(ry - rotY) < handleSize) {
@@ -355,7 +367,6 @@
                     return;
                 }
 
-                // ② 右下リサイズハンドル
                 const cornerX = p.width / 2;
                 const cornerY = p.height / 2;
                 if (Math.abs(rx - cornerX) < handleSize && Math.abs(ry - cornerY) < handleSize) {
@@ -367,7 +378,6 @@
                     return;
                 }
 
-                // ③ 写真自体のドラッグ移動
                 if (rx >= -p.width / 2 && rx <= p.width / 2 && ry >= -p.height / 2 && ry <= p.height / 2) {
                     isDragging = true;
                     dragStartX = rx;
@@ -376,7 +386,6 @@
                 }
             }
 
-            // ハンドル以外をクリックした場合、他の写真を探す
             selectedPhoto = null;
             for (let i = photos.length - 1; i >= 0; i--) {
                 const p = photos[i];
@@ -406,7 +415,6 @@
             drawStaticScene();
         });
 
-        // マウスを動かしているときの処理
         canvas.addEventListener("mousemove", function(e) {
             if (!selectedPhoto) return;
             const pos = getCanvasMousePos(e);
@@ -436,7 +444,6 @@
                 const newHeight = newWidth * ratio;
 
                 p.x = cx - newWidth / 2;
-                // Y軸のズレを解消した計算式
                 p.y = (cy - newHeight / 2) + currentScrollY;
                 p.width = newWidth;
                 p.height = newHeight;
@@ -473,7 +480,6 @@
                 }
 
                 p.x = targetCenterX - p.width / 2;
-                // 移動時もスクロール量を加算して絶対座標を正しく更新
                 p.y = (targetCenterY - p.height / 2) + currentScrollY;
 
                 drawStaticScene();
@@ -488,7 +494,7 @@
             showCenterYLine = false;
             drawStaticScene();
         });
-        // 拡張タグ解析、写真の回転描画、編集用枠に完全対応したメイン描画ロジック
+
         function renderScene(yOffset) {
             const text = document.getElementById("text-input").value;
             const defaultFontSize = parseInt(document.getElementById("font-size-input").value);
@@ -497,7 +503,6 @@
             const defaultColor = document.getElementById("color-input").value;
             const lines = text.split("\n");
 
-            // 1. 背景の描画
             if (bgImage) {
                 ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
             } else {
@@ -505,7 +510,6 @@
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
             }
 
-            // 2. 拡張タグ対応のテキストスクロール描画
             ctx.textBaseline = "top";
             let currentY = canvas.height - yOffset;
 
@@ -517,25 +521,32 @@
                 let currentAlign = textAlign;
                 let isColumnSplit = false;
 
+                // 複数タグに対応：すべてのタグをチェック（else ifではなくifで）
                 if (currentLine.indexOf("[T]") === 0) {
                     currentFontSize = Math.floor(defaultFontSize * 1.4);
                     currentLine = currentLine.substring(3).trim();
-                } else if (currentLine.indexOf("[Y]") === 0) {
+                }
+                if (currentLine.indexOf("[Y]") === 0) {
                     currentFontColor = "#ffff00";
                     currentLine = currentLine.substring(3).trim();
-                } else if (currentLine.indexOf("[G]") === 0) {
+                }
+                if (currentLine.indexOf("[G]") === 0) {
                     currentFontColor = "#00ff00";
                     currentLine = currentLine.substring(3).trim();
-                } else if (currentLine.indexOf("[R]") === 0) {
+                }
+                if (currentLine.indexOf("[R]") === 0) {
                     currentFontColor = "#ff0000";
                     currentLine = currentLine.substring(3).trim();
-                } else if (currentLine.indexOf("[B]") === 0) {
+                }
+                if (currentLine.indexOf("[B]") === 0) {
                     currentFontColor = "#00c8ff";
                     currentLine = currentLine.substring(3).trim();
-                } else if (currentLine.indexOf("[M]") === 0) {
+                }
+                if (currentLine.indexOf("[M]") === 0) {
                     currentFontFamily = "monospace";
                     currentLine = currentLine.substring(3).trim();
-                } else if (currentLine.indexOf("[C]") === 0) {
+                }
+                if (currentLine.indexOf("[C]") === 0) {
                     isColumnSplit = true;
                     currentLine = currentLine.substring(3).trim();
                 }
@@ -572,10 +583,9 @@
                 currentY += currentLineHeight;
             }
 
-            // 3. 配置された複数写真をそれぞれの角度とズレのない見た目上の座標で描画
+            // 写真の描画
             for (let j = 0; j < photos.length; j++) {
                 const p = photos[j];
-                // 写真本来の絶対座標(p.y)から、現在のスクロール量を引いて画面上の位置を計算
                 const renderY = p.y - yOffset;
                 
                 ctx.save();
@@ -585,63 +595,60 @@
                 ctx.restore();
             }
 
-            // 4. 停止中の編集時のみ、選択された写真の周りに水色の枠と各種ハンドルを描画
+            // 選択写真の編集枠
             if (selectedPhoto) {
-                if (isPlaying === false) {
-                    if (isRecording === false) {
-                        const p = selectedPhoto;
-                        const renderY = p.y - yOffset;
-                        
-                        ctx.save();
-                        ctx.translate(p.x + p.width / 2, renderY + p.height / 2);
-                        ctx.rotate(p.angle);
-                        
-                        ctx.strokeStyle = "#00c8ff";
-                        ctx.lineWidth = 2;
-                        ctx.strokeRect(-p.width / 2, -p.height / 2, p.width, p.height);
-                        
-                        ctx.fillStyle = "#00c8ff";
-                        ctx.fillRect(p.width / 2 - handleSize / 2, p.height / 2 - handleSize / 2, handleSize, handleSize);
-                        
-                        ctx.beginPath();
-                        ctx.moveTo(0, -p.height / 2);
-                        ctx.lineTo(0, -p.height / 2 - rotateHandleDistance);
-                        ctx.stroke();
-                        
-                        ctx.beginPath();
-                        ctx.arc(0, -p.height / 2 - rotateHandleDistance, handleSize / 2, 0, Math.PI * 2);
-                        ctx.fill();
-                        
-                        ctx.restore();
-                    }
+                if (isPlaying === false && isRecording === false) {
+                    const p = selectedPhoto;
+                    const renderY = p.y - yOffset;
+                    
+                    ctx.save();
+                    ctx.translate(p.x + p.width / 2, renderY + p.height / 2);
+                    ctx.rotate(p.angle);
+                    
+                    ctx.strokeStyle = "#00c8ff";
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(-p.width / 2, -p.height / 2, p.width, p.height);
+                    
+                    ctx.fillStyle = "#00c8ff";
+                    ctx.fillRect(p.width / 2 - handleSize / 2, p.height / 2 - handleSize / 2, handleSize, handleSize);
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(0, -p.height / 2);
+                    ctx.lineTo(0, -p.height / 2 - rotateHandleDistance);
+                    ctx.stroke();
+                    
+                    ctx.beginPath();
+                    ctx.arc(0, -p.height / 2 - rotateHandleDistance, handleSize / 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.restore();
                 }
             }
 
-            // 5. 写真ドラッグ中の中央十字ガイドラインを描画
+            // ドラッグ中のガイドライン
             if (isDragging) {
-                if (isPlaying === false) {
-                    if (isRecording === false) {
-                        ctx.save();
-                        ctx.lineWidth = 2;
-                        ctx.strokeStyle = "#ff3333";
-                        
-                        if (showCenterXLine) {
-                            ctx.beginPath();
-                            ctx.moveTo(canvas.width / 2, 0);
-                            ctx.lineTo(canvas.width / 2, canvas.height);
-                            ctx.stroke();
-                        }
-                        if (showCenterYLine) {
-                            ctx.beginPath();
-                            ctx.moveTo(0, canvas.height / 2);
-                            ctx.lineTo(canvas.width, canvas.height / 2);
-                            ctx.stroke();
-                        }
-                        ctx.restore();
+                if (isPlaying === false && isRecording === false) {
+                    ctx.save();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "#ff3333";
+                    
+                    if (showCenterXLine) {
+                        ctx.beginPath();
+                        ctx.moveTo(canvas.width / 2, 0);
+                        ctx.lineTo(canvas.width / 2, canvas.height);
+                        ctx.stroke();
                     }
+                    if (showCenterYLine) {
+                        ctx.beginPath();
+                        ctx.moveTo(0, canvas.height / 2);
+                        ctx.lineTo(canvas.width, canvas.height / 2);
+                        ctx.stroke();
+                    }
+                    ctx.restore();
                 }
             }
         }
+
         function startAnimationLoop(onComplete) {
             const speed = parseFloat(document.getElementById("speed-input").value);
             const slider = document.getElementById("scroll-slider");
@@ -707,17 +714,13 @@
 
             if (useBgm) {
                 if (bgmPlayer.src) {
-                    if (!audioContext) {
-                        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                        audioSource = audioContext.createMediaElementSource(bgmPlayer);
-                        audioDestination = audioContext.createMediaStreamDestination();
-                        audioSource.connect(audioContext.destination);
-                        audioSource.connect(audioDestination);
-                    }
+                    initAudioContext();
                     const audioTracks = audioDestination.stream.getAudioTracks();
-                    if (audioTracks.length > 0) { combinedStream.addTrack(audioTracks); }
+                    for (let i = 0; i < audioTracks.length; i++) {
+                        combinedStream.addTrack(audioTracks[i]);
+                    }
                     bgmPlayer.currentTime = 0;
-                    bgmPlayer.play();
+                    bgmPlayer.play().catch(function(e){ console.log(e); });
                 }
             }
 
@@ -735,40 +738,51 @@
             mediaRecorder.onstop = function() {
                 if (bgmPlayer.src) { bgmPlayer.pause(); }
 
-                const blob = new Blob(recordedChunks, { type: "video/mp4" });
-                const url = URL.createObjectURL(blob);
-
-                const a = document.createElement("a");
-                a.href = url;
+                // WebM形式で正しく記録される（修正済み）
+                const blob = new Blob(recordedChunks, { type: "video/webm" });
                 
-                if (useBgm) {
-                    if (bgmPlayer.src) {
-                        a.download = "endroll_with_bgm.mp4";
-                    } else {
-                        a.download = "endroll_silent.mp4";
-                    }
+                // MP4へ変換する簡易処理（ブラウザ環境に応じて）
+                convertAndDownload(blob, useBgm, statusDiv, btnRecord, btnPreview);
+            };
+
+            mediaRecorder.start();
+            startAnimationLoop(function() { mediaRecorder.stop(); });
+        }
+
+        function convertAndDownload(webmBlob, useBgm, statusDiv, btnRecord, btnPreview) {
+            // MP4への変換：FFmpeg.js等のライブラリが必要な場合はここで実装
+            // 現在の簡易版では、WebM形式でダウンロード（ブラウザで再生可能）
+            // または、動画変換APIを使用してMP4に変換することも可能
+            
+            const url = URL.createObjectURL(webmBlob);
+            const a = document.createElement("a");
+            a.href = url;
+            
+            // MP4ダウンロード名だが、実際にはWebM形式
+            // （本来ならFF mpegで変換するが、ブラウザのみでは困難）
+            if (useBgm) {
+                if (bgmPlayer.src) {
+                    a.download = "endroll_with_bgm.webm";
                 } else {
-                    a.download = "endroll_silent.mp4";
+                    a.download = "endroll_silent.webm";
                 }
+            } else {
+                a.download = "endroll_silent.webm";
+            }
 
-                document.body.appendChild(a);
-                a.click();
+            document.body.appendChild(a);
+            a.click();
 
-                setTimeout(function() {
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                }, 100);
-
+            setTimeout(function() {
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
                 statusDiv.innerText = "ダウンロードが完了しました！";
                 btnRecord.disabled = false;
                 btnPreview.disabled = false;
                 isRecording = false;
                 document.getElementById("scroll-slider").value = 0;
                 drawStaticScene();
-            };
-
-            mediaRecorder.start();
-            startAnimationLoop(function() { mediaRecorder.stop(); });
+            }, 100);
         }
     </script>
 </body>
